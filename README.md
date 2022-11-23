@@ -215,10 +215,12 @@ def __init__(self):
 def publish_waypoints(self, closest_idx):
         lane = Lane()
         lane.header = self.base_waypoints.header
-        lane.waypoints = self.base_waypoints[closest_idx:closest_idx + LOOKAHEAD_WPS]
-        self.final_waypoints_pub(lane)
+        lane.waypoints = self.base_waypoints.waypoints[closest_idx:closest_idx + LOOKAHEAD_WPS]
+        self.final_waypoints_pub.publish(lane)
 ```
 
 ### 初步测试
 
-完成简单的waypoints的发布后，可以在模拟器中进行测试，
+完成简单的waypoints的发布后，可以在模拟器中进行测试，这时候就可以看到 waypoints 已经被发布了，显示成绿色的小球：
+
+![1669191866075](image/README/1669191866075.png)
