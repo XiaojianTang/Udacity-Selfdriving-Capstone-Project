@@ -32,13 +32,16 @@ roslaunch launch/styx.launch
 
 其他ROS相关的命令如下表（待补充）：
 
-| 功能描述      | 命令行        | 输出 |
-| ------------- | ------------- | ---- |
-| 开启主线程    | roscore       |      |
-| 开启节点      | rosrun ...    |      |
-| 查看topic列表 | rostopic list |      |
-| 查看msg列表   | rosmsg list   |      |
-|               |               |      |
+| 功能描述          | 命令行                                                 | 输出 |
+| ----------------- | ------------------------------------------------------ | ---- |
+| 开启主线程        | roscore                                                |      |
+| 开启节点          | rosrun /node_name                                      |      |
+| 查看 node 列表   | rosnode list                                           |      |
+| 查看 topic 列表   | rostopic list                                          |      |
+| 查看 msg 列表     | rosmsg list                                            |      |
+| 查看 topic 信息   | rostopic info /topic_name                              |      |
+| 查看 msg 信息     | rosmsg info /msg_type<br />rosed msg_name/msg_type.msg |      |
+| 查看实时 msg 内容 | rostopic echo /topic_name                              |      |
 
 ## 项目计算图形
 
@@ -159,8 +162,6 @@ my_lane_msg[0].twist.twits.linear.x
 
 > KDTree是一个k维的树形数据结构，主要用于在多维空间的数据搜索
 
-
-
 #### `get_closest_waypoint_idx()`
 
 在获取最近的 waypoint 时，我们希望得到的点是在车辆前方的，可以通过构建一些 hyperparameter 来实现，下图时通过**向量的点积**来判断最近点在是否在当前位置前方。
@@ -193,7 +194,6 @@ if val>0:
     closest_idx = (closest_idx + 1) % len(self.waypoints_2d)
 ```
 
-
 #### `publish_waypoints()`
 
 在__init__(self) 函数中定义 Publisher() 函数。后再 publish_waypoints() 函数中建立 lane 信息类型，并把 waypoints 传递给 lane，最后通过将传入发布函数完成发布，参数的传递路径如下：
@@ -202,7 +202,7 @@ if val>0:
 
 > 其中 `header `与 `base_waypoints `相同
 >
-> waypoints为在`base_waypoints`中，从最近的点开始，数量为`LOOKAHEAD_WP`的切片
+> waypoints为在 `base_waypoints`中，从最近的点开始，数量为 `LOOKAHEAD_WP`的切片
 
 参考代码如下：
 
@@ -224,3 +224,36 @@ def publish_waypoints(self, closest_idx):
 完成简单的waypoints的发布后，可以在模拟器中进行测试，这时候就可以看到 waypoints 已经被发布了，显示成绿色的小球：
 
 ![1669191866075](image/README/1669191866075.png)
+
+# DBW Node
+
+完成了获得 waypoint 后，接下来需要实现让车辆跟着waypoint运动，这需要完成通过 DBW 节点。DBW 是 Drive By Wire 的简写，意思是线控驾驶，是通过电控的方式，控制车辆的转向、油门、制动等。
+
+## 相关 Topic
+
+DBW 节点需要从 subscribe \twist_cmd 的 topic（由 waypoints_follower 节点 publish 自动完成），以获得车辆的目标位置、速度等信息，后将响应的操作指令 publish 以下 topic：
+
+* /vehicle/throttle
+* /vehicle/brake_cmd
+* /vehicle/steering_cmd
+
+> 此外，在测试阶段时，车辆通常配有安全员。当安全员介入车辆控制后，PID 等控制器应该停止累积误差，因此需要注意 DBW 是否正在工作
+
+本节点相关的 topic 关系如下图：
+
+![1669254140209](image/README/1669254140209.png)
+
+## 相关源文件
+
+DBW 节点涉及多个 .py 文件，主体部分在 dbw_node.py 中，其中可能需要应用到以下文件：
+
+| 文件名                 | 说明                                                                               |
+| ---------------------- | ---------------------------------------------------------------------------------- |
+| dbw_node.py            | 配置节点的 subscriber 和 publisher，关系如上图                                     |
+| > twist_controller.py | 包含 Controller 类，用于控制车辆                                                   |
+| >> yaw_controller.py   | 可以用在 twist_controller 中的角度控制器，将线性和角度信息转化为**转向命令** |
+| >> pid.py              | 可以用在 twist_controller 中的 PID 控制器                                          |
+| >> lowpass.py          | 可以用在 twist_controller 中的 low pass 过滤器                                     |
+| dbw_test.py            | 用于测试 DBW 节点                                                                  |
+
+## 代码实现
