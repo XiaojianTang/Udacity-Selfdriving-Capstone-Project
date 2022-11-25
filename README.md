@@ -43,6 +43,17 @@ roslaunch launch/styx.launch
 | 查看 msg 信息     | rosmsg info /msg_type<br />rosed msg_name/msg_type.msg |      |
 | 查看实时 msg 内容 | rostopic echo /topic_name                              |      |
 
+在 python 中进行 subscriber 和 publisher 定义的参考代码如下：
+
+```python
+pub = rospy.Publisher('/topic_name', msg_datatype, queue_size)
+msg.header = header
+msg.msg_type = data
+pub.publish(msg)
+
+rospy.Subscriber('/topic_name', msg_datatype, func_name)
+```
+
 ## 项目计算图形
 
 整个项目的架构如下图：
@@ -61,7 +72,7 @@ python文件在 ` ros\src\waypoint_updater\waypoint_updater.py`，可[点击这�
 
 第一版可以暂时不用考虑交通灯和障碍物等的影响。完成后在模拟器中可以看到车辆前方有一串绿色路径点即可。后续完成了dbw(线控)的节点后，可以根据实际情况在更新本节点。
 
-### 相关 Topic
+## 相关 Topic
 
 需要 subscribe 的 topic 有：
 
@@ -72,7 +83,7 @@ python文件在 ` ros\src\waypoint_updater\waypoint_updater.py`，可[点击这�
 
 * `/final_waypoints`
 
-### Message 描述
+## Message 描述
 
 在 `waypoint_updater.py` 中可以看出 `/base_waypoints` 和 `/final_waypoints` 传递的message 的类型是：
 
@@ -134,7 +145,7 @@ my_lane_msg[0]. pose.pose.position.x
 my_lane_msg[0].twist.twits.linear.x
 ```
 
-### Topics 和 Msg 一览
+## Topics 和 Msg 一览
 
 | Topic            | Msg Type                  | 备注                                               |
 | ---------------- | ------------------------- | -------------------------------------------------- |
@@ -142,9 +153,9 @@ my_lane_msg[0].twist.twits.linear.x
 | /current_pose    | geometry_msgs/PoseStamped | 车辆当前的位置和速度，由模拟器或定位模块获取       |
 | /final_waypoints | styx_msgs/Lane            | 是/base_waypoints的一部分，在车前方离车最近的N个点 |
 
-### 代码实现
+## 代码实现
 
-#### `pose_cb()` 和 `waypoints_cb()`
+### `pose_cb()` 和 `waypoints_cb()`
 
 首先需完成两个 callback 函数，分别用于暂存 pose 信息和 waypoint 信息：
 
@@ -162,7 +173,7 @@ my_lane_msg[0].twist.twits.linear.x
 
 > KDTree是一个k维的树形数据结构，主要用于在多维空间的数据搜索
 
-#### `get_closest_waypoint_idx()`
+### `get_closest_waypoint_idx()`
 
 在获取最近的 waypoint 时，我们希望得到的点是在车辆前方的，可以通过构建一些 hyperparameter 来实现，下图时通过**向量的点积**来判断最近点在是否在当前位置前方。
 
@@ -194,7 +205,7 @@ if val>0:
     closest_idx = (closest_idx + 1) % len(self.waypoints_2d)
 ```
 
-#### `publish_waypoints()`
+### `publish_waypoints()`
 
 在__init__(self) 函数中定义 Publisher() 函数。后再 publish_waypoints() 函数中建立 lane 信息类型，并把 waypoints 传递给 lane，最后通过将传入发布函数完成发布，参数的传递路径如下：
 
@@ -219,7 +230,7 @@ def publish_waypoints(self, closest_idx):
         self.final_waypoints_pub.publish(lane)
 ```
 
-### 初步测试
+## 初步测试
 
 完成简单的waypoints的发布后，可以在模拟器中进行测试，这时候就可以看到 waypoints 已经被发布了，显示成绿色的小球：
 
@@ -257,3 +268,79 @@ DBW 节点涉及多个 .py 文件，主体部分在 dbw_node.py 中，其中可�
 | dbw_test.py            | 用于测试 DBW 节点                                                                  |
 
 ## 代码实现
+
+### `dbw_node.py`
+
+在__init__()函数中，先定义所需的变量并实例化所需函数。
+
+首先根据本节点的计算图形定义 subscriber 和 publisher：
+
+```python
+self.steer_pub = rospy.Publisher('/vehicle/steering_cmd', SteeringCmd, queue_size=1)
+self.throttle_pub = rospy.Publisher('/vehicle/throttle_cmd', ThrottleCmd, queue_size=1)
+self.brake_pub = rospy.Publisher('/vehicle/brake_cmd', BrakeCmd, queue_size=1)
+```
+
+```python
+rospy.Subscriber('/vehicle/dbw_enabled', Bool, self.dbw_enabled_cb)
+rospy.Subscriber('/twist_cmd', TwistStamped, self.twist_cb)
+rospy.Subscriber('/current_velocity', TwistStamped, self.velocity_cb)
+```
+
+### `twist_controller.py`
+
+定义两个 controller，分别为
+
+* yaw_controller()， 用于控制**转向**
+* pid_controller()，用于控制**速度**（含油门和制动）
+
+```python
+self.yaw_controller = YawController(wheel_base, steer_ratio, 0.1, max_lat_accel, max_steer_angle)
+self.throttle_controller = PID(kp,ki,kd,mn,mx)
+```
+
+
+对于转向控制，代码相对简单，只需要获取当前车速以及waypoint的线速度和角速度，使用yaw_controller()函数即可返回所需的转向值：
+
+```python
+current_vel = self.vel_lpf.filt(current_vel)
+steering = self.yaw_controller.get_steering(linear_vel, angular_vel, current_vel)
+```
+
+> 其中当前速度可以使用 LowPassFilter() 将噪音去除
+
+
+对于车速控制，使用PID控制：
+
+```python
+vel_error = linear_vel - current_vel
+self.last_vel = current_vel
+
+current_time = rospy.get_time()
+sample_time = current_time - self.last_time
+self.last_time = current_time
+
+throttle = self.throttle_controller.step(vel_error, sample_time)
+brake = 0
+
+if linear_vel == 0 and current_vel < 0.1:
+     throttle = 0
+     brake = 700
+elif throttle < .1 and vel_error < 0:
+     throttle = 0
+     decel = max(vel_error, self.decl_limit)
+     brake = abs(decel)*self.vehicle_mass*self.wheel_radius
+```
+
+
+> 注意
+>
+> 1. 当waypoint的线速度为0（可能为红灯），而当前车速接近0时（可能怠速前进），需进行制动，保持车辆静止，使brake = 700 （Nm）
+> 2. 当油门接近为0，但速度差为负时（目标waypoint速度小于当前车速），需要进行制动，以降速至目标速度，但减速不能大于车辆的极限
+> 3. brake为制动力矩值，当只知道所需减速度时，需要根据车辆质量和车轮半径换算得到所需力矩
+
+## 测试
+
+完成此部分后，在模拟器中，车辆可以沿绿色 waypoint 行驶，完成转向
+
+![1669341293241](image/README/1669341293241.png)
