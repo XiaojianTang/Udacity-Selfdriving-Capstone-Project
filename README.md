@@ -344,3 +344,17 @@ elif throttle < .1 and vel_error < 0:
 完成此部分后，在模拟器中，车辆可以沿绿色 waypoint 行驶，完成转向
 
 ![1669341293241](image/README/1669341293241.png)
+
+
+
+# Traffic Light Detector Node
+
+## 相关 Topic
+
+![1669346775028](image/README/1669346775028.png)
+
+
+![1669359239668](image/README/1669359239668.png)
+
+
+# Waypoint Uupdater Node - II
