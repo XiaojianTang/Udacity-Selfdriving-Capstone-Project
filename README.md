@@ -299,7 +299,6 @@ self.yaw_controller = YawController(wheel_base, steer_ratio, 0.1, max_lat_accel,
 self.throttle_controller = PID(kp,ki,kd,mn,mx)
 ```
 
-
 对于转向控制，代码相对简单，只需要获取当前车速以及waypoint的线速度和角速度，使用yaw_controller()函数即可返回所需的转向值：
 
 ```python
@@ -308,7 +307,6 @@ steering = self.yaw_controller.get_steering(linear_vel, angular_vel, current_vel
 ```
 
 > 其中当前速度可以使用 LowPassFilter() 将噪音去除
-
 
 对于车速控制，使用PID控制：
 
@@ -332,7 +330,6 @@ elif throttle < .1 and vel_error < 0:
      brake = abs(decel)*self.vehicle_mass*self.wheel_radius
 ```
 
-
 > 注意
 >
 > 1. 当waypoint的线速度为0（可能为红灯），而当前车速接近0时（可能怠速前进），需进行制动，保持车辆静止，使brake = 700 （Nm）
@@ -345,16 +342,109 @@ elif throttle < .1 and vel_error < 0:
 
 ![1669341293241](image/README/1669341293241.png)
 
+# Traffic Light Detection Node
 
-
-# Traffic Light Detector Node
+为了让车辆在道路上能够按照交通灯进行停止和再次启动，需要完成 Traffic Light Detection Node。本节点会根据已知的路口**停车线**的位置，找到其对应的waypoint， 并获取当时**交通灯的状态**，最后将这两个信息发布给 waypoint updater 节点，用以调整 `waypoint `中的运动状态（如 `waypoint `的速度）。
 
 ## 相关 Topic
 
-![1669346775028](image/README/1669346775028.png)
+本节点除了获取完整的道路信息 /base_waypoints 以外，还需要获得 /image_color topic里的摄像机拍摄的图片信息，以及车辆当前位置 /current_pose。
 
+最后输出 /traffic_waypoints 用于表示交通灯的位置以及状态。
+
+![1669346775028](https://file+.vscode-resource.vscode-cdn.net/c%3A/02.Udacity_Self-Driving_Car_Engineer_Projects/Capstone-Project/CarND-Capstone/image/README/1669346775028.png)
+
+如不使用深度学习进行交通灯检测的话，还需要 subscribe `'/vehicle/traffic_lights'` 的topic来直接获得交通灯的状态
+
+```python
+sub3 = rospy.Subscriber('/vehicle/traffic_lights', TrafficLightArray, self.traffic_cb)
+```
+
+## 代码实现
+
+### `get_light_state()`
+
+如不使用摄像头画面进行交通灯检测的话，`get_light_state() `只需要根据 ` '/vehicle/traffic_lights'` topic 在 `traffic_cb()`中获得即可。
+
+```python
+def traffic_cb(self, msg):
+    self.lights = msg.lights
+```
+
+
+### `get_closest_waypoint()` 及 ` process_traffic_lights()`
+
+为了找到离交通灯最近的 waypooint ，需要先建立 `get_closest_waypoint() `函数，用于获取离输入 waypoint 最近的 waypoint。同样也可以使用 KDTree 来完成，`waypionts_tree `在 `waypoints_cb()` 中获取即可：
+
+```python
+def get_closest_waypoint(self, x, y):
+    closest_idx = self.waypoints_tree.query([x,y],1)[1] #don't care about whether is it before or behind  
+    return closest_idx
+```
+
+
+
+之后便可以在 `process_traffic_lights()` 中通过 `get_closest_waypoint()`函数需要获取有交通灯的路口**离停车线**最近的那个 waypoint，用于标记车辆停车位置，以及到达时应该执行的状态（如红灯，则改waypoint的线速度应改为0）。**停车线**可以通过 `stop_line_positions = self.config['stop_line_positions']` 获得。之后建立循环，依次根据停车线 `stop_line_position[i]`找到离其最近的 waypoint。之后用这个位置 temp_wp_idex 与车辆位置 car_position 进行比对，找到最近的那个 `temp_wp_idx`， 即为所需要的**离车辆最近**的交通灯路口**停车线**的位置了：
+
+```python
+for i, light in enumerate(self.lights):
+    line = stop_line_positions[i]
+    #get the wp idx nearest to the light
+    temp_wp_idx = self.get_closest_waypoint(line[0],line[1])
+
+    #calculate the distance between the near light wp and current wp
+    d = temp_wp_idx - car_position
+
+    #update diff if d is smaller
+    if d>=0 and d < diff:
+        diff = d
+        closest_light = light
+        line_wp_idx = temp_wp_idx  
+        #when iteration finished, closest light and line idx is got
+```
+
+## 测试
+
+完成此部分代码后，可在模拟器中测试，并通过` rostopic echo /traffic_waypoint `来实时监测 topic 发布的 msg 的内容：
 
 ![1669359239668](image/README/1669359239668.png)
 
+# Waypoint Updater Node - II
 
-# Waypoint Uupdater Node - II
+完成了交通灯的识别后，就可以更新 waypoint updater 节点了。如果前方红绿灯显示为红灯，合理的操作应是逐渐减速，并在交通灯对应的停车线处停止车辆并保持到绿灯后，开始缓慢加速，通过路口并以目标速度继续形式。
+
+## 代码实现
+
+### decelerate_waypoints()
+
+当遇到红灯时，需要将对应路口的waypoint的速度标为0，并且为了保持舒适性，在车辆位置和路口位置之间的waypoint 的速度应该依次变化。因此需要构建一个新的 waypoints 的序列，更新其中所有点的速度（为了不对原来的 waypoints 造成不可逆的改变，需建立一个新的 `temp `列表，来储存更改速度后的waypoints），来完成减速和停止的动作。
+
+```python
+ def decelerate_waypoints(self,waypoints,closest_idx):
+     temp = []
+     for i, wp in enumerate(waypoints):
+
+         p = Waypoint()
+         p.pose = wp.pose
+
+         stop_idx = max(self.stopline_wp_idx - closest_idx - 2, 0)
+         dist = self.distance(waypoints, i, stop_idx)
+         vel = math.sqrt(2 * MAX_DECEL * dist)
+         if vel < 1.0:
+             vel = 0
+  
+         p.twist.twist.linear.x = min(vel, wp.twist.twist.linear.x)
+         temp.append(p)
+
+     return temp
+```
+
+其中，速度的变化可以是线性的也可以是非线性的，为了使得加加速度均匀变化，速度的变化采用非线性的形式，既通过距离和减速度的平方根来计算。
+
+
+
+# 最终效果
+
+最后，在车辆遇到路口时，将会逐渐减速指0，并通过制动，将车辆维持在禁止状态。绿灯后，车辆可以缓慢启动，并逐渐加速通过路口并达到指定车速
+
+![1669435842224](image/README/1669435842224.png)
