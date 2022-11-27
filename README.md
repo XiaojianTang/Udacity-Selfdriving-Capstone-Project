@@ -10,11 +10,17 @@
 2. 模拟器：模拟器内置了一台自动驾驶汽车，可以通过ROS系统进行操作。其中ROS系统运行在虚拟机中，[模拟器](https://github.com/udacity/CarND-Capstone/releases)运行在Windows环境下，二者通过电脑端口进行通信。通信的方法参见 [Port Forwarding.pdf](Port+Forwarding.pdf)。
 3. 另外，在项目源代码中包含了对交通信号灯进行训练所需的[训练集](https://s3-us-west-1.amazonaws.com/udacity-selfdrivingcar/traffic_light_bag_file.zip)。
 
-进入虚拟机后需要先安装python所需要的库文件，相关库在 [requirements.txt](requirements.txt) 中，可以通过以下命令一次性获取：
+进入虚拟机后需要先安装python所需要的库文件，相关库在 [requirements.txt](requirements.txt) 中，可以进入本项目文件夹后通过以下命令一次性获取：
 
 ```
-cd CarND-Capstone
 pip install -r requirements.txt
+```
+
+> Udacity提供的VM镜像里的pip版本太旧了，安装库时可能出错，可以用下面的命令行先更新pip
+
+```
+curl https://bootstrap.pypa.io/pip/2.7/get-pip.py -o get-pip.py
+sudo python2 get-pip.py
 ```
 
 ## ROS的基本操作
@@ -371,7 +377,6 @@ def traffic_cb(self, msg):
     self.lights = msg.lights
 ```
 
-
 ### `get_closest_waypoint()` 及 ` process_traffic_lights()`
 
 为了找到离交通灯最近的 waypooint ，需要先建立 `get_closest_waypoint() `函数，用于获取离输入 waypoint 最近的 waypoint。同样也可以使用 KDTree 来完成，`waypionts_tree `在 `waypoints_cb()` 中获取即可：
@@ -381,8 +386,6 @@ def get_closest_waypoint(self, x, y):
     closest_idx = self.waypoints_tree.query([x,y],1)[1] #don't care about whether is it before or behind  
     return closest_idx
 ```
-
-
 
 之后便可以在 `process_traffic_lights()` 中通过 `get_closest_waypoint()`函数需要获取有交通灯的路口**离停车线**最近的那个 waypoint，用于标记车辆停车位置，以及到达时应该执行的状态（如红灯，则改waypoint的线速度应改为0）。**停车线**可以通过 `stop_line_positions = self.config['stop_line_positions']` 获得。之后建立循环，依次根据停车线 `stop_line_position[i]`找到离其最近的 waypoint。之后用这个位置 temp_wp_idex 与车辆位置 car_position 进行比对，找到最近的那个 `temp_wp_idx`， 即为所需要的**离车辆最近**的交通灯路口**停车线**的位置了：
 
@@ -405,7 +408,7 @@ for i, light in enumerate(self.lights):
 
 ## 测试
 
-完成此部分代码后，可在模拟器中测试，并通过` rostopic echo /traffic_waypoint `来实时监测 topic 发布的 msg 的内容：
+完成此部分代码后，可在模拟器中测试，并通过 `rostopic echo /traffic_waypoint`来实时监测 topic 发布的 msg 的内容：
 
 ![1669359239668](image/README/1669359239668.png)
 
@@ -440,8 +443,6 @@ for i, light in enumerate(self.lights):
 ```
 
 其中，速度的变化可以是线性的也可以是非线性的，为了使得加加速度均匀变化，速度的变化采用非线性的形式，既通过距离和减速度的平方根来计算。
-
-
 
 # 最终效果
 
